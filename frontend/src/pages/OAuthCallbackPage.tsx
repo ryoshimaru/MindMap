@@ -55,7 +55,7 @@ export function OAuthCallbackPage() {
   return (
     <LoadingState
       title="Завершаем вход"
-      description="GoalMind проверяет OAuth-ответ и открывает рабочее пространство."
+      description="mindmap проверяет OAuth-ответ и открывает рабочее пространство."
       fullPage
     />
   );

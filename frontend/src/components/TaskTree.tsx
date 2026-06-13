@@ -1,44 +1,23 @@
-import type { TaskStatus, TaskTreeNode } from "../api/types";
-import { EmptyState } from "./EmptyState";
+import { useState } from "react";
+import { tasksApi } from "../api/endpoints";
+import type { TaskDependency, TaskTreeNode } from "../api/types";
 import { TaskNode } from "./TaskNode";
 
-interface TaskTreeProps {
-  tasks: TaskTreeNode[];
-  updatingTaskId?: string | null;
-  expandingTaskId?: string | null;
-  onStatusChange: (taskId: string, status: TaskStatus) => Promise<void>;
-  onDecomposeTask?: (taskId: string) => Promise<void>;
-}
+function flatten(nodes: TaskTreeNode[]): TaskTreeNode[] { return nodes.flatMap((node) => [node, ...flatten(node.children)]); }
 
-export function TaskTree({
-  tasks,
-  updatingTaskId,
-  expandingTaskId,
-  onStatusChange,
-  onDecomposeTask
-}: TaskTreeProps) {
-  if (tasks.length === 0) {
-    return (
-      <EmptyState
-        title="Плана задач пока нет"
-        description="Постройте AI-план, чтобы превратить цель в этапы, задачи и подзадачи."
-      />
-    );
+export function TaskTree({ tasks, dependencies, onChanged }: { tasks: TaskTreeNode[]; dependencies: Record<string, TaskDependency[]>; onChanged: () => Promise<void> }) {
+  const [addingStage, setAddingStage] = useState(false);
+  const [title, setTitle] = useState("");
+  const allTasks = flatten(tasks);
+
+  async function addStage() {
+    if (!title.trim() || !tasks[0]) return;
+    await tasksApi.create(tasks[0].goalId, {title, description: "", priority: "MEDIUM", estimatedHours: 0, orderIndex: tasks.length + 1});
+    setTitle(""); setAddingStage(false); await onChanged();
   }
 
-  return (
-    <div className="task-tree">
-      {tasks.map((task) => (
-        <TaskNode
-          key={task.id}
-          node={task}
-          depth={0}
-          updatingTaskId={updatingTaskId}
-          expandingTaskId={expandingTaskId}
-          onStatusChange={onStatusChange}
-          onDecomposeTask={onDecomposeTask}
-        />
-      ))}
-    </div>
-  );
+  return <div className="task-tree">
+    {tasks.map((stage, index) => <TaskNode key={stage.id} node={stage} stageIndex={index} siblings={tasks} allTasks={allTasks} dependencies={dependencies} onChanged={onChanged} />)}
+    {addingStage ? <div className="inline-editor"><input autoFocus value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Название этапа"/><button className="button button--primary" onClick={addStage}>Добавить</button><button className="button button--ghost" onClick={() => setAddingStage(false)}>Отмена</button></div> : <button className="add-stage" onClick={() => setAddingStage(true)}>+ Добавить этап</button>}
+  </div>;
 }

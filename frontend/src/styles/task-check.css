@@ -1,0 +1,13 @@
+.step-check {
+  display: grid;
+  place-items: center;
+  padding: 0;
+  color: #d9ff56;
+}
+
+.step-check--done::after {
+  width: 11px;
+  height: 11px;
+  background: #d9ff56;
+  content: "";
+}

@@ -4,8 +4,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 
@@ -53,10 +53,10 @@ func (p *GeminiProvider) generateJSON(prompt string, target any) error {
 	}
 	model := p.model
 	if model == "" {
-		model = "gemini-1.5-flash"
+		model = "gemini-3.5-flash"
 	}
 
-	endpoint := "https://generativelanguage.googleapis.com/v1beta/models/" + url.PathEscape(model) + ":generateContent?key=" + url.QueryEscape(p.apiKey)
+	endpoint := "https://generativelanguage.googleapis.com/v1beta/models/" + model + ":generateContent"
 	body := map[string]any{
 		"contents": []map[string]any{
 			{
@@ -73,18 +73,6 @@ func (p *GeminiProvider) generateJSON(prompt string, target any) error {
 	}
 
 	payload, _ := json.Marshal(body)
-	req, err := http.NewRequest(http.MethodPost, endpoint, bytes.NewReader(payload))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := p.client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
 	var decoded struct {
 		Candidates []struct {
 			Content struct {
@@ -97,10 +85,47 @@ func (p *GeminiProvider) generateJSON(prompt string, target any) error {
 			Message string `json:"message"`
 		} `json:"error"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&decoded); err != nil {
-		return err
-	}
-	if resp.StatusCode >= 400 {
+
+	for attempt := 0; attempt < 3; attempt++ {
+		req, err := http.NewRequest(http.MethodPost, endpoint, bytes.NewReader(payload))
+		if err != nil {
+			return err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("x-goog-api-key", p.apiKey)
+
+		resp, err := p.client.Do(req)
+		if err != nil {
+			return err
+		}
+		responseBody, readErr := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if readErr != nil {
+			return readErr
+		}
+
+		decoded = struct {
+			Candidates []struct {
+				Content struct {
+					Parts []struct {
+						Text string `json:"text"`
+					} `json:"parts"`
+				} `json:"content"`
+			} `json:"candidates"`
+			Error *struct {
+				Message string `json:"message"`
+			} `json:"error"`
+		}{}
+		if err := json.Unmarshal(responseBody, &decoded); err != nil {
+			return err
+		}
+		if resp.StatusCode < 400 {
+			break
+		}
+		if attempt < 2 && retryableGeminiStatus(resp.StatusCode) {
+			time.Sleep(time.Duration(attempt+1) * time.Second)
+			continue
+		}
 		if decoded.Error != nil && decoded.Error.Message != "" {
 			return fmt.Errorf("gemini API error: %s", decoded.Error.Message)
 		}
@@ -115,6 +140,10 @@ func (p *GeminiProvider) generateJSON(prompt string, target any) error {
 		return err
 	}
 	return json.Unmarshal(jsonPayload, target)
+}
+
+func retryableGeminiStatus(status int) bool {
+	return status == http.StatusTooManyRequests || status == http.StatusInternalServerError || status == http.StatusBadGateway || status == http.StatusServiceUnavailable || status == http.StatusGatewayTimeout
 }
 
 func geminiAnalyzePrompt(text string, now time.Time) string {

@@ -35,11 +35,11 @@ export function RegisterPage() {
     <div className="auth-shell">
       <div className="auth-grid">
         <section className="auth-brand">
-          <span className="eyebrow">GoalMind</span>
+          <span className="eyebrow">mindmap</span>
           <strong>Создание аккаунта.</strong>
           <p>
             После регистрации откроется главный сценарий: ввод цели, AI-анализ,
-            уточняющие вопросы и roadmap.
+            уточняющие вопросы и план.
           </p>
         </section>
 

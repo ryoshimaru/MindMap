@@ -32,13 +32,13 @@ func New(services Services) *Handler {
 func (h *Handler) Health(w http.ResponseWriter, r *http.Request) {
 	WriteJSON(w, http.StatusOK, map[string]string{
 		"status":  "ok",
-		"message": "server is ready",
+		"message": "Сервер готов",
 	})
 }
 
 func (h *Handler) NotFound(w http.ResponseWriter, r *http.Request) {
 	if strings.HasPrefix(r.URL.Path, "/api/") {
-		WriteError(w, http.StatusNotFound, "not_found", "endpoint was not found")
+		WriteError(w, http.StatusNotFound, "not_found", "Адрес API не найден")
 		return
 	}
 	http.NotFound(w, r)
@@ -78,11 +78,41 @@ func (h *Handler) CurrentUser(w http.ResponseWriter, r *http.Request) {
 	WriteJSON(w, http.StatusOK, user)
 }
 
+func (h *Handler) GetProfile(w http.ResponseWriter, r *http.Request) {
+	user, ok := h.RequireUser(w, r)
+	if !ok {
+		return
+	}
+	profile, err := h.services.Auth.GetProfile(user.ID)
+	if err != nil {
+		WriteStoreError(w, err)
+		return
+	}
+	WriteJSON(w, http.StatusOK, profile)
+}
+
+func (h *Handler) SaveProfile(w http.ResponseWriter, r *http.Request) {
+	user, ok := h.RequireUser(w, r)
+	if !ok {
+		return
+	}
+	var body domain.UpsertUserProfileRequest
+	if !DecodeJSON(w, r, &body) {
+		return
+	}
+	profile, err := h.services.Auth.SaveProfile(user.ID, body)
+	if err != nil {
+		WriteStoreError(w, err)
+		return
+	}
+	WriteJSON(w, http.StatusOK, profile)
+}
+
 func (h *Handler) StartGoogleOAuth(w http.ResponseWriter, r *http.Request) {
 	clientID := strings.TrimSpace(os.Getenv("GOOGLE_CLIENT_ID"))
 	clientSecret := strings.TrimSpace(os.Getenv("GOOGLE_CLIENT_SECRET"))
 	if clientID == "" || clientSecret == "" {
-		WriteError(w, http.StatusBadRequest, "oauth_not_configured", "Google OAuth is not configured")
+		WriteError(w, http.StatusBadRequest, "oauth_not_configured", "Вход через Google не настроен")
 		return
 	}
 
@@ -98,7 +128,7 @@ func (h *Handler) StartGoogleOAuth(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) GoogleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 	if strings.TrimSpace(os.Getenv("GOOGLE_CLIENT_ID")) == "" || strings.TrimSpace(os.Getenv("GOOGLE_CLIENT_SECRET")) == "" {
-		WriteError(w, http.StatusBadRequest, "oauth_not_configured", "Google OAuth is not configured")
+		WriteError(w, http.StatusBadRequest, "oauth_not_configured", "Вход через Google не настроен")
 		return
 	}
 
@@ -702,12 +732,12 @@ func (h *Handler) CreateFeedback(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) RequireUser(w http.ResponseWriter, r *http.Request) (domain.User, bool) {
 	token := BearerToken(r)
 	if token == "" {
-		WriteError(w, http.StatusUnauthorized, "unauthorized", "missing bearer token")
+		WriteError(w, http.StatusUnauthorized, "unauthorized", "Требуется авторизация")
 		return domain.User{}, false
 	}
 	user, err := h.services.Auth.UserByToken(token)
 	if err != nil {
-		WriteError(w, http.StatusUnauthorized, "unauthorized", "invalid bearer token")
+		WriteError(w, http.StatusUnauthorized, "unauthorized", "Сессия истекла или недействительна")
 		return domain.User{}, false
 	}
 	return user, true

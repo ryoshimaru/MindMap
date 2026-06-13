@@ -20,6 +20,7 @@ import (
 var (
 	ErrConflict     = errors.New("conflict")
 	ErrInvalidAuth  = errors.New("invalid auth")
+	ErrInvalidAIKey = errors.New("invalid AI key")
 	ErrInvalidState = errors.New("invalid state")
 	ErrNotFound     = errors.New("not found")
 	ErrUnauthorized = errors.New("unauthorized")
@@ -33,6 +34,7 @@ type MemoryStore struct {
 	usersByEmail map[string]string
 	sessions     map[string]string
 	aiSettings   map[string]*domain.AISettingsRequest
+	profiles     map[string]*domain.UserProfile
 
 	goals       map[string]*domain.GoalRecord
 	goalOrder   []string
@@ -62,6 +64,7 @@ func NewMemoryStore() *MemoryStore {
 		usersByEmail:       make(map[string]string),
 		sessions:           make(map[string]string),
 		aiSettings:         make(map[string]*domain.AISettingsRequest),
+		profiles:           make(map[string]*domain.UserProfile),
 		goals:              make(map[string]*domain.GoalRecord),
 		goalContext:        make(map[string]*domain.GoalContext),
 		tasks:              make(map[string]*domain.Task),
@@ -79,6 +82,32 @@ func NewMemoryStore() *MemoryStore {
 
 	store.seed()
 	return store
+}
+
+func (s *MemoryStore) GetUserProfile(userID string) (domain.UserProfile, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	profile, ok := s.profiles[userID]
+	if !ok {
+		return domain.UserProfile{}, ErrNotFound
+	}
+	return *profile, nil
+}
+
+func (s *MemoryStore) SaveUserProfile(userID string, req domain.UpsertUserProfileRequest) (domain.UserProfile, error) {
+	if req.Age < 14 || req.Age > 120 || strings.TrimSpace(req.Occupation) == "" || req.FreeHoursPerWeek <= 0 || req.FreeHoursPerWeek > 168 || req.AvailableBudget < 0 {
+		return domain.UserProfile{}, ErrValidation
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := time.Now().UTC()
+	createdAt := now
+	if current, ok := s.profiles[userID]; ok {
+		createdAt = current.CreatedAt
+	}
+	profile := &domain.UserProfile{UserID: userID, Age: req.Age, Occupation: strings.TrimSpace(req.Occupation), FreeHoursPerWeek: req.FreeHoursPerWeek, AvailableBudget: req.AvailableBudget, Constraints: strings.TrimSpace(req.Constraints), CreatedAt: createdAt, UpdatedAt: now}
+	s.profiles[userID] = profile
+	return *profile, nil
 }
 
 func (s *MemoryStore) RegisterUser(req domain.RegisterRequest) (domain.AuthResponse, error) {
@@ -389,8 +418,21 @@ func (s *MemoryStore) CreateGeneratedPlan(userID, requestID string, plan domain.
 	s.goalContext[goal.ID] = &context
 
 	orderIndex := 1
+	taskIDsByTitle := make(map[string]string)
+	pendingDependencies := make(map[string][]string)
 	for _, generatedTask := range plan.Tasks {
-		s.createGeneratedTaskLocked(goal.ID, nil, generatedTask, &orderIndex, now)
+		s.createGeneratedTaskLocked(goal.ID, nil, generatedTask, &orderIndex, now, taskIDsByTitle, pendingDependencies)
+	}
+	for taskID, titles := range pendingDependencies {
+		for _, title := range titles {
+			dependsOnID, ok := taskIDsByTitle[strings.TrimSpace(title)]
+			if !ok || dependsOnID == taskID {
+				continue
+			}
+			dep := &domain.TaskDependency{ID: newID(), TaskID: taskID, DependsOnTaskID: dependsOnID, CreatedAt: now}
+			s.deps[dep.ID] = dep
+			s.depsByTask[taskID] = append(s.depsByTask[taskID], dep.ID)
+		}
 	}
 
 	generation := domain.GenerationDetails{
@@ -433,6 +475,42 @@ func (s *MemoryStore) CreateGeneratedPlan(userID, requestID string, plan domain.
 		Tasks:       buildTaskTree(s.tasksForGoalLocked(goal.ID)),
 		Progress:    progress,
 	}, nil
+}
+
+func (s *MemoryStore) ReplaceGoalPlan(userID, goalID string, plan domain.GeneratedPlan) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	goal, ok := s.goals[goalID]
+	if !ok || goal.UserID != userID || len(plan.Tasks) == 0 {
+		return 0, ErrNotFound
+	}
+	for _, task := range s.tasksForGoalLocked(goalID) {
+		s.deleteTaskCascadeLocked(task.ID)
+	}
+	goal.Title = strings.TrimSpace(plan.Goal.Title)
+	if goal.Title == "" {
+		goal.Title = "Цель"
+	}
+	goal.Description = strings.TrimSpace(plan.Goal.Description)
+	goal.Deadline = normalizeDatePointer(plan.Goal.Deadline)
+	goal.Status = domain.GoalStatusActive
+	goal.UpdatedAt = time.Now().UTC()
+	order := 1
+	ids := map[string]string{}
+	pending := map[string][]string{}
+	for _, generated := range plan.Tasks {
+		s.createGeneratedTaskLocked(goalID, nil, generated, &order, goal.UpdatedAt, ids, pending)
+	}
+	for taskID, titles := range pending {
+		for _, title := range titles {
+			if dependsOnID, ok := ids[strings.TrimSpace(title)]; ok && dependsOnID != taskID {
+				dep := &domain.TaskDependency{ID: newID(), TaskID: taskID, DependsOnTaskID: dependsOnID, CreatedAt: goal.UpdatedAt}
+				s.deps[dep.ID] = dep
+				s.depsByTask[taskID] = append(s.depsByTask[taskID], dep.ID)
+			}
+		}
+	}
+	return order - 1, nil
 }
 
 func (s *MemoryStore) CreateOAuthUserSession(email, name, avatarURL string, provider domain.AuthProvider) (string, error) {
@@ -563,7 +641,6 @@ func (s *MemoryStore) UpdateGoal(userID, goalID string, req domain.UpdateGoalReq
 		}
 		record.Title = title
 	}
-
 	if req.Description != nil {
 		description := strings.TrimSpace(*req.Description)
 		if description == "" {
@@ -807,6 +884,13 @@ func (s *MemoryStore) UpdateTask(userID, taskID string, req domain.UpdateTaskReq
 		}
 		task.Title = title
 	}
+	if req.ParentTaskID != nil {
+		parent, ok := s.tasks[*req.ParentTaskID]
+		if !ok || parent.GoalID != task.GoalID || parent.ParentTaskID != nil || parent.ID == task.ID {
+			return domain.Task{}, ErrValidation
+		}
+		task.ParentTaskID = req.ParentTaskID
+	}
 
 	if req.Description != nil {
 		task.Description = strings.TrimSpace(*req.Description)
@@ -867,7 +951,16 @@ func (s *MemoryStore) UpdateTaskStatus(userID, taskID string, status domain.Task
 		return domain.Task{}, ErrNotFound
 	}
 
-	task.Status = normalizeTaskStatus(status)
+	status = normalizeTaskStatus(status)
+	if status == domain.TaskStatusDone {
+		for _, depID := range s.depsByTask[taskID] {
+			dep := s.deps[depID]
+			if dependency := s.tasks[dep.DependsOnTaskID]; dependency != nil && dependency.Status != domain.TaskStatusDone {
+				return domain.Task{}, ErrInvalidState
+			}
+		}
+	}
+	task.Status = status
 	task.EditedByUser = true
 	task.UpdatedAt = time.Now().UTC()
 	s.touchGoalLocked(task.GoalID)
@@ -1615,7 +1708,7 @@ func (s *MemoryStore) touchGoalLocked(goalID string) {
 	}
 }
 
-func (s *MemoryStore) createGeneratedTaskLocked(goalID string, parentTaskID *string, generated domain.GeneratedPlanTask, orderIndex *int, now time.Time) {
+func (s *MemoryStore) createGeneratedTaskLocked(goalID string, parentTaskID *string, generated domain.GeneratedPlanTask, orderIndex *int, now time.Time, taskIDsByTitle map[string]string, pendingDependencies map[string][]string) {
 	title := strings.TrimSpace(generated.Title)
 	if title == "" {
 		title = "Generated task"
@@ -1643,11 +1736,13 @@ func (s *MemoryStore) createGeneratedTaskLocked(goalID string, parentTaskID *str
 
 	s.tasks[task.ID] = &task
 	s.taskOrder = append(s.taskOrder, task.ID)
+	taskIDsByTitle[task.Title] = task.ID
+	pendingDependencies[task.ID] = append([]string(nil), generated.DependsOn...)
 	(*orderIndex)++
 
 	parentID := task.ID
 	for _, child := range generated.Children {
-		s.createGeneratedTaskLocked(goalID, &parentID, child, orderIndex, now)
+		s.createGeneratedTaskLocked(goalID, &parentID, child, orderIndex, now, taskIDsByTitle, pendingDependencies)
 	}
 }
 
@@ -1808,7 +1903,19 @@ func (s *MemoryStore) getProgressLocked(goalID string) (domain.ProgressResponse,
 	}
 
 	response := domain.ProgressResponse{GoalID: goalID}
-	tasks := s.tasksForGoalLocked(goalID)
+	allTasks := s.tasksForGoalLocked(goalID)
+	parentIDs := make(map[string]bool)
+	for _, task := range allTasks {
+		if task.ParentTaskID != nil {
+			parentIDs[*task.ParentTaskID] = true
+		}
+	}
+	tasks := make([]domain.Task, 0, len(allTasks))
+	for _, task := range allTasks {
+		if !parentIDs[task.ID] {
+			tasks = append(tasks, task)
+		}
+	}
 	response.TotalTasks = len(tasks)
 
 	for _, task := range tasks {
@@ -1896,7 +2003,7 @@ func normalizeGoalStatus(status domain.GoalStatus) domain.GoalStatus {
 
 func normalizeTaskStatus(status domain.TaskStatus) domain.TaskStatus {
 	switch status {
-	case domain.TaskStatusTodo, domain.TaskStatusInProgress, domain.TaskStatusDone, domain.TaskStatusCancelled:
+	case domain.TaskStatusTodo, domain.TaskStatusDone:
 		return status
 	default:
 		return domain.TaskStatusTodo

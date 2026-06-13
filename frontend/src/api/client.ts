@@ -115,7 +115,7 @@ export async function apiRequest<T>(
   if (!response.ok) {
     const errorPayload = body as ErrorResponse | null;
 
-    if (response.status === 401) {
+    if (response.status === 401 && errorPayload?.error.code === "unauthorized") {
       clearAccessToken();
       redirectToLogin();
     }

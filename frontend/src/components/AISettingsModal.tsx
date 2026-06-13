@@ -6,9 +6,11 @@ import { LoadingState } from "./LoadingState";
 
 interface AISettingsModalProps {
   onReady?: (settings: AISettingsResponse) => void;
+  canClose?: boolean;
+  onClose?: () => void;
 }
 
-export function AISettingsModal({ onReady }: AISettingsModalProps) {
+export function AISettingsModal({ onReady, canClose = false, onClose }: AISettingsModalProps) {
   const [settings, setSettings] = useState<AISettingsResponse | null>(null);
   const [provider, setProvider] = useState<Exclude<AIProviderName, "mock">>("gemini");
   const [apiKey, setApiKey] = useState("");
@@ -69,15 +71,14 @@ export function AISettingsModal({ onReady }: AISettingsModalProps) {
     );
   }
 
-  if (hasRealKey) return null;
+  if (hasRealKey && !canClose) return null;
 
   return (
     <div className="modal-backdrop" role="dialog" aria-modal="true">
       <section className="modal-panel">
-        <span className="eyebrow">Настройка AI</span>
-        <h2>Подключите AI-провайдера</h2>
+        <div className="modal-title"><div><span className="eyebrow">Настройка AI</span><h2>{hasRealKey ? "Изменить AI-провайдера" : "Подключите AI-провайдера"}</h2></div>{canClose ? <button className="icon-button" onClick={onClose}>×</button> : null}</div>
         <p>
-          Для анализа целей нужен API key Gemini или DeepSeek. Полный ключ не
+          Для анализа целей нужен API-ключ Gemini или DeepSeek. Перед сохранением приложение проверит подключение. Полный ключ не
           отображается после сохранения.
         </p>
 
@@ -99,14 +100,14 @@ export function AISettingsModal({ onReady }: AISettingsModalProps) {
 
           <div className="field-group">
             <label className="field-label" htmlFor="ai-api-key">
-              API key
+              API-ключ
             </label>
             <input
               id="ai-api-key"
               className="field-control"
               type="password"
               value={apiKey}
-              placeholder="Введите API key"
+              placeholder="Введите API-ключ"
               required
               onChange={(event) => setApiKey(event.target.value)}
             />
@@ -118,7 +119,7 @@ export function AISettingsModal({ onReady }: AISettingsModalProps) {
           {errorMessage ? <div className="inline-error">{errorMessage}</div> : null}
 
           <button type="submit" className="button button--primary" disabled={isSaving}>
-            {isSaving ? "Сохранение..." : "Сохранить"}
+            {isSaving ? "Проверяем ключ..." : "Проверить и сохранить"}
           </button>
         </form>
       </section>

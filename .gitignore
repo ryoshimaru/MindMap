@@ -1,2 +1,4 @@
 .gocache/
 .gomodcache/
+frontend/node_modules/@esbuild/darwin-arm64/
+frontend/node_modules/@rollup/rollup-darwin-arm64/

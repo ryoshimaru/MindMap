@@ -23,6 +23,17 @@ create table user_ai_settings (
     updated_at timestamptz not null default now()
 );
 
+create table user_profiles (
+    user_id uuid primary key references users(id) on delete cascade,
+    age integer not null check (age between 14 and 120),
+    occupation text not null,
+    free_hours_per_week numeric not null check (free_hours_per_week > 0 and free_hours_per_week <= 168),
+    available_budget numeric not null default 0 check (available_budget >= 0),
+    constraints text not null default '',
+    created_at timestamptz not null default now(),
+    updated_at timestamptz not null default now()
+);
+
 create table goals (
     id uuid primary key,
     user_id uuid not null references users(id) on delete cascade,
@@ -145,17 +156,3 @@ create index planning_requests_user_updated_idx on planning_requests(user_id, up
 create index roadmap_history_goal_id_idx on roadmap_history(goal_id);
 create index roadmap_history_request_id_idx on roadmap_history(request_id);
 create index sessions_user_id_idx on sessions(user_id);
-
--- +goose Down
-drop table if exists feedback;
-drop table if exists roadmap_history;
-drop table if exists plan_versions;
-drop table if exists generations;
-drop table if exists planning_requests;
-drop table if exists task_dependencies;
-drop table if exists tasks;
-drop table if exists goal_contexts;
-drop table if exists goals;
-drop table if exists user_ai_settings;
-drop table if exists sessions;
-drop table if exists users;

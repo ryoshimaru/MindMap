@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/ryoshimaru/MindMap/internal/domain"
+	"github.com/ryoshimaru/MindMap/internal/security"
 )
 
 type PostgresStore struct {
@@ -19,6 +20,35 @@ type PostgresStore struct {
 
 func NewPostgresStore(db *sql.DB) *PostgresStore {
 	return &PostgresStore{db: db}
+}
+
+func (s *PostgresStore) GetUserProfile(userID string) (domain.UserProfile, error) {
+	var profile domain.UserProfile
+	err := s.db.QueryRow(`
+		select user_id, age, occupation, free_hours_per_week, available_budget, constraints, created_at, updated_at
+		from user_profiles where user_id = $1
+	`, userID).Scan(&profile.UserID, &profile.Age, &profile.Occupation, &profile.FreeHoursPerWeek, &profile.AvailableBudget, &profile.Constraints, &profile.CreatedAt, &profile.UpdatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.UserProfile{}, ErrNotFound
+	}
+	return profile, err
+}
+
+func (s *PostgresStore) SaveUserProfile(userID string, req domain.UpsertUserProfileRequest) (domain.UserProfile, error) {
+	if req.Age < 14 || req.Age > 120 || strings.TrimSpace(req.Occupation) == "" || req.FreeHoursPerWeek <= 0 || req.FreeHoursPerWeek > 168 || req.AvailableBudget < 0 {
+		return domain.UserProfile{}, ErrValidation
+	}
+	_, err := s.db.Exec(`
+		insert into user_profiles (user_id, age, occupation, free_hours_per_week, available_budget, constraints)
+		values ($1,$2,$3,$4,$5,$6)
+		on conflict (user_id) do update set age=excluded.age, occupation=excluded.occupation,
+			free_hours_per_week=excluded.free_hours_per_week, available_budget=excluded.available_budget,
+			constraints=excluded.constraints, updated_at=now()
+	`, userID, req.Age, strings.TrimSpace(req.Occupation), req.FreeHoursPerWeek, req.AvailableBudget, strings.TrimSpace(req.Constraints))
+	if err != nil {
+		return domain.UserProfile{}, err
+	}
+	return s.GetUserProfile(userID)
 }
 
 func (s *PostgresStore) RegisterUser(req domain.RegisterRequest) (domain.AuthResponse, error) {
@@ -155,11 +185,15 @@ func (s *PostgresStore) CreateOAuthUserSession(email, name, avatarURL string, pr
 }
 
 func (s *PostgresStore) GetAISettings(userID string) (domain.AISettingsResponse, error) {
-	var provider, apiKey string
-	err := s.db.QueryRow(`select provider, encrypted_api_key from user_ai_settings where user_id = $1`, userID).Scan(&provider, &apiKey)
+	var provider, encrypted string
+	err := s.db.QueryRow(`select provider, encrypted_api_key from user_ai_settings where user_id = $1`, userID).Scan(&provider, &encrypted)
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.AISettingsResponse{}, nil
 	}
+	if err != nil {
+		return domain.AISettingsResponse{}, err
+	}
+	apiKey, err := security.DecryptAPIKey(encrypted)
 	if err != nil {
 		return domain.AISettingsResponse{}, err
 	}
@@ -168,14 +202,16 @@ func (s *PostgresStore) GetAISettings(userID string) (domain.AISettingsResponse,
 
 func (s *PostgresStore) GetAISettingsSecret(userID string) (domain.AISettingsRequest, error) {
 	var settings domain.AISettingsRequest
-	err := s.db.QueryRow(`select provider, encrypted_api_key from user_ai_settings where user_id = $1`, userID).Scan(&settings.Provider, &settings.APIKey)
+	var encrypted string
+	err := s.db.QueryRow(`select provider, encrypted_api_key from user_ai_settings where user_id = $1`, userID).Scan(&settings.Provider, &encrypted)
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.AISettingsRequest{}, nil
 	}
 	if err != nil {
 		return domain.AISettingsRequest{}, err
 	}
-	return settings, nil
+	settings.APIKey, err = security.DecryptAPIKey(encrypted)
+	return settings, err
 }
 
 func (s *PostgresStore) SaveAISettings(userID string, req domain.AISettingsRequest) (domain.AISettingsResponse, error) {
@@ -187,14 +223,18 @@ func (s *PostgresStore) SaveAISettings(userID string, req domain.AISettingsReque
 	if apiKey == "" {
 		return domain.AISettingsResponse{}, ErrValidation
 	}
-	_, err := s.db.Exec(`
+	encrypted, err := security.EncryptAPIKey(apiKey)
+	if err != nil {
+		return domain.AISettingsResponse{}, err
+	}
+	_, err = s.db.Exec(`
 		insert into user_ai_settings (user_id, provider, encrypted_api_key, created_at, updated_at)
 		values ($1, $2, $3, now(), now())
 		on conflict (user_id) do update set
 			provider = excluded.provider,
 			encrypted_api_key = excluded.encrypted_api_key,
 			updated_at = now()
-	`, userID, provider, apiKey)
+	`, userID, provider, encrypted)
 	if err != nil {
 		return domain.AISettingsResponse{}, err
 	}
@@ -385,9 +425,22 @@ func (s *PostgresStore) CreateGeneratedPlan(userID, requestID string, plan domai
 	}
 
 	order := 0
+	taskIDsByTitle := make(map[string]string)
+	pendingDependencies := make(map[string][]string)
 	for _, task := range plan.Tasks {
-		if err := s.insertGeneratedTask(ctx, tx, goal.ID, nil, task, &order, now); err != nil {
+		if err := s.insertGeneratedTask(ctx, tx, goal.ID, nil, task, &order, now, taskIDsByTitle, pendingDependencies); err != nil {
 			return domain.GeneratePlanResponse{}, err
+		}
+	}
+	for taskID, titles := range pendingDependencies {
+		for _, title := range titles {
+			dependsOnID, ok := taskIDsByTitle[strings.TrimSpace(title)]
+			if !ok || dependsOnID == taskID {
+				continue
+			}
+			if _, err := tx.ExecContext(ctx, `insert into task_dependencies (id, task_id, depends_on_task_id, created_at) values ($1,$2,$3,$4) on conflict do nothing`, newID(), taskID, dependsOnID, now); err != nil {
+				return domain.GeneratePlanResponse{}, err
+			}
 		}
 	}
 
@@ -430,6 +483,53 @@ func (s *PostgresStore) CreateGeneratedPlan(userID, requestID string, plan domai
 		return domain.GeneratePlanResponse{}, err
 	}
 	return domain.GeneratePlanResponse{RequestID: requestID, Feasibility: record.Feasibility, Goal: goal, Tasks: tasks, Progress: progress}, nil
+}
+
+func (s *PostgresStore) ReplaceGoalPlan(userID, goalID string, plan domain.GeneratedPlan) (int, error) {
+	if _, err := s.GetGoal(userID, goalID); err != nil {
+		return 0, err
+	}
+	if len(plan.Tasks) == 0 {
+		return 0, ErrValidation
+	}
+	ctx := context.Background()
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer rollback(tx)
+	if _, err := tx.ExecContext(ctx, `delete from tasks where goal_id=$1`, goalID); err != nil {
+		return 0, err
+	}
+	title := strings.TrimSpace(plan.Goal.Title)
+	if title == "" {
+		title = "Цель"
+	}
+	if _, err := tx.ExecContext(ctx, `update goals set title=$1, description=$2, deadline=$3, status=$4, updated_at=now() where id=$5 and user_id=$6`, title, strings.TrimSpace(plan.Goal.Description), dateArg(plan.Goal.Deadline), domain.GoalStatusActive, goalID, userID); err != nil {
+		return 0, err
+	}
+	order := 0
+	ids := map[string]string{}
+	pending := map[string][]string{}
+	now := time.Now().UTC()
+	for _, generated := range plan.Tasks {
+		if err := s.insertGeneratedTask(ctx, tx, goalID, nil, generated, &order, now, ids, pending); err != nil {
+			return 0, err
+		}
+	}
+	for taskID, titles := range pending {
+		for _, dependencyTitle := range titles {
+			if dependsOnID, ok := ids[strings.TrimSpace(dependencyTitle)]; ok && dependsOnID != taskID {
+				if _, err := tx.ExecContext(ctx, `insert into task_dependencies (id,task_id,depends_on_task_id,created_at) values ($1,$2,$3,$4) on conflict do nothing`, newID(), taskID, dependsOnID, now); err != nil {
+					return 0, err
+				}
+			}
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return order, nil
 }
 
 func (s *PostgresStore) ListGoals(userID string) []domain.Goal {
@@ -658,6 +758,13 @@ func (s *PostgresStore) UpdateTask(userID, taskID string, req domain.UpdateTaskR
 	if req.Title != nil {
 		task.Title = strings.TrimSpace(*req.Title)
 	}
+	if req.ParentTaskID != nil {
+		parent, parentErr := s.GetTask(userID, *req.ParentTaskID)
+		if parentErr != nil || parent.GoalID != task.GoalID || parent.ParentTaskID != nil || parent.ID == task.ID {
+			return domain.Task{}, ErrValidation
+		}
+		task.ParentTaskID = req.ParentTaskID
+	}
 	if req.Description != nil {
 		task.Description = strings.TrimSpace(*req.Description)
 	}
@@ -683,9 +790,9 @@ func (s *PostgresStore) UpdateTask(userID, taskID string, req domain.UpdateTaskR
 	}
 	task.UpdatedAt = time.Now().UTC()
 	_, err = s.db.Exec(`
-		update tasks set title=$1, description=$2, status=$3, priority=$4, estimated_hours=$5, deadline=$6, order_index=$7, edited_by_user=$8, updated_at=$9
-		where id=$10
-	`, task.Title, task.Description, task.Status, task.Priority, task.EstimatedHours, dateArg(task.Deadline), task.OrderIndex, task.EditedByUser, task.UpdatedAt, task.ID)
+		update tasks set parent_task_id=$1, title=$2, description=$3, status=$4, priority=$5, estimated_hours=$6, deadline=$7, order_index=$8, edited_by_user=$9, updated_at=$10
+		where id=$11
+	`, task.ParentTaskID, task.Title, task.Description, task.Status, task.Priority, task.EstimatedHours, dateArg(task.Deadline), task.OrderIndex, task.EditedByUser, task.UpdatedAt, task.ID)
 	return task, err
 }
 
@@ -699,6 +806,23 @@ func (s *PostgresStore) DeleteTask(userID, taskID string) error {
 }
 
 func (s *PostgresStore) UpdateTaskStatus(userID, taskID string, status domain.TaskStatus) (domain.Task, error) {
+	status = normalizeTaskStatus(status)
+	if status == domain.TaskStatusDone {
+		var unfinished int
+		err := s.db.QueryRow(`
+			select count(*) from task_dependencies d
+			join tasks dependency on dependency.id = d.depends_on_task_id
+			join tasks task on task.id = d.task_id
+			join goals g on g.id = task.goal_id
+			where d.task_id = $1 and g.user_id = $2 and dependency.status <> $3
+		`, taskID, userID, domain.TaskStatusDone).Scan(&unfinished)
+		if err != nil {
+			return domain.Task{}, err
+		}
+		if unfinished > 0 {
+			return domain.Task{}, ErrInvalidState
+		}
+	}
 	edited := true
 	return s.UpdateTask(userID, taskID, domain.UpdateTaskRequest{Status: &status, EditedByUser: &edited})
 }
@@ -769,7 +893,7 @@ func (s *PostgresStore) GetProgress(userID, goalID string) (domain.ProgressRespo
 		       coalesce(sum(estimated_hours), 0),
 		       coalesce(sum(estimated_hours) filter (where status = 'DONE'), 0)
 		from tasks
-		where goal_id = $1
+		where goal_id = $1 and not exists (select 1 from tasks child where child.parent_task_id = tasks.id)
 	`, goalID).Scan(&response.TotalTasks, &response.CompletedTasks, &response.TotalEstimatedHours, &response.CompletedEstimatedHours)
 	if err != nil {
 		return domain.ProgressResponse{}, err
@@ -976,7 +1100,7 @@ func (s *PostgresStore) DecomposeTask(userID, taskID string, req domain.Decompos
 	return domain.DecomposeGoalResponse{}, ErrValidation
 }
 
-func (s *PostgresStore) insertGeneratedTask(ctx context.Context, tx *sql.Tx, goalID string, parentTaskID *string, generated domain.GeneratedPlanTask, order *int, now time.Time) error {
+func (s *PostgresStore) insertGeneratedTask(ctx context.Context, tx *sql.Tx, goalID string, parentTaskID *string, generated domain.GeneratedPlanTask, order *int, now time.Time, taskIDsByTitle map[string]string, pendingDependencies map[string][]string) error {
 	taskID := newID()
 	task := domain.Task{
 		ID:             taskID,
@@ -996,6 +1120,8 @@ func (s *PostgresStore) insertGeneratedTask(ctx context.Context, tx *sql.Tx, goa
 	if task.Title == "" {
 		return ErrValidation
 	}
+	taskIDsByTitle[task.Title] = task.ID
+	pendingDependencies[task.ID] = append([]string(nil), generated.DependsOn...)
 	*order = *order + 1
 	if _, err := tx.ExecContext(ctx, `
 		insert into tasks (id, goal_id, parent_task_id, title, description, status, priority, estimated_hours, deadline, order_index, source, edited_by_user, created_at, updated_at)
@@ -1004,7 +1130,7 @@ func (s *PostgresStore) insertGeneratedTask(ctx context.Context, tx *sql.Tx, goa
 		return err
 	}
 	for _, child := range generated.Children {
-		if err := s.insertGeneratedTask(ctx, tx, goalID, &taskID, child, order, now); err != nil {
+		if err := s.insertGeneratedTask(ctx, tx, goalID, &taskID, child, order, now, taskIDsByTitle, pendingDependencies); err != nil {
 			return err
 		}
 	}

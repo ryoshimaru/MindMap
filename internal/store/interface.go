@@ -7,6 +7,8 @@ type Store interface {
 	Login(req domain.LoginRequest) (domain.AuthResponse, error)
 	UserByToken(token string) (domain.User, error)
 	CreateOAuthUserSession(email, name, avatarURL string, provider domain.AuthProvider) (string, error)
+	GetUserProfile(userID string) (domain.UserProfile, error)
+	SaveUserProfile(userID string, req domain.UpsertUserProfileRequest) (domain.UserProfile, error)
 
 	GetAISettings(userID string) (domain.AISettingsResponse, error)
 	GetAISettingsSecret(userID string) (domain.AISettingsRequest, error)
@@ -17,6 +19,7 @@ type Store interface {
 	GetPlanningRequest(userID, requestID string) (domain.PlanningRequest, error)
 	SaveRequestEvaluation(userID, requestID string, evaluation domain.EvaluateRequestResponse) (domain.EvaluateRequestResponse, error)
 	CreateGeneratedPlan(userID, requestID string, plan domain.GeneratedPlan) (domain.GeneratePlanResponse, error)
+	ReplaceGoalPlan(userID, goalID string, plan domain.GeneratedPlan) (int, error)
 
 	ListGoals(userID string) []domain.Goal
 	CreateGoal(userID string, req domain.CreateGoalRequest) (domain.Goal, error)

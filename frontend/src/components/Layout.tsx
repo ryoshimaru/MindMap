@@ -1,17 +1,12 @@
-import { Outlet, useLocation } from "react-router-dom";
+import { Outlet } from "react-router-dom";
 import { Header } from "./Header";
-import { Sidebar } from "./Sidebar";
 
 export function Layout() {
-  const location = useLocation();
-  const isDashboard = location.pathname === "/dashboard";
-
   return (
-    <div className={`app-shell${isDashboard ? " app-shell--focus" : ""}`}>
-      {isDashboard ? null : <Sidebar />}
+    <div className="app-shell">
       <div className="app-main">
-        {isDashboard ? null : <Header />}
-        <main className={isDashboard ? "app-content app-content--focus" : "app-content"}>
+        <Header />
+        <main className="app-content">
           <Outlet />
         </main>
       </div>

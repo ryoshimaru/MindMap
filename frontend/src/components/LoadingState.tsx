@@ -6,7 +6,7 @@ interface LoadingStateProps {
 
 export function LoadingState({
   title = "Загрузка",
-  description = "GoalMind готовит следующий экран.",
+  description = "mindmap готовит следующий экран.",
   fullPage = false
 }: LoadingStateProps) {
   return (

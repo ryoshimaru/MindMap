@@ -14,6 +14,8 @@ func NewRouter(handler *handlers.Handler) http.Handler {
 	mux.HandleFunc("POST /api/auth/register", handler.Register)
 	mux.HandleFunc("POST /api/auth/login", handler.Login)
 	mux.HandleFunc("GET /api/auth/me", handler.CurrentUser)
+	mux.HandleFunc("GET /api/profile", handler.GetProfile)
+	mux.HandleFunc("PUT /api/profile", handler.SaveProfile)
 	mux.HandleFunc("GET /api/auth/oauth/google/start", handler.StartGoogleOAuth)
 	mux.HandleFunc("GET /api/auth/oauth/google/callback", handler.GoogleOAuthCallback)
 	mux.HandleFunc("GET /api/ai-settings", handler.GetAISettings)

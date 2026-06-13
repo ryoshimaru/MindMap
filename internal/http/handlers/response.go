@@ -40,7 +40,7 @@ func DecodeJSON(w http.ResponseWriter, r *http.Request, target any) bool {
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(target); err != nil {
-		WriteError(w, http.StatusBadRequest, "invalid_json", "request body must be valid JSON")
+		WriteError(w, http.StatusBadRequest, "invalid_json", "Некорректный формат данных")
 		return false
 	}
 	return true
@@ -49,18 +49,20 @@ func DecodeJSON(w http.ResponseWriter, r *http.Request, target any) bool {
 func WriteStoreError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, store.ErrValidation):
-		WriteError(w, http.StatusBadRequest, "validation_error", "request data is invalid")
+		WriteError(w, http.StatusBadRequest, "validation_error", "Проверьте заполненные данные")
 	case errors.Is(err, store.ErrConflict):
-		WriteError(w, http.StatusConflict, "conflict", "resource already exists")
+		WriteError(w, http.StatusConflict, "conflict", "Такая запись уже существует")
 	case errors.Is(err, store.ErrInvalidAuth):
-		WriteError(w, http.StatusUnauthorized, "invalid_credentials", "email or password is incorrect")
+		WriteError(w, http.StatusUnauthorized, "invalid_credentials", "Неверная почта или пароль")
+	case errors.Is(err, store.ErrInvalidAIKey):
+		WriteError(w, http.StatusUnprocessableEntity, "invalid_ai_key", "AI-провайдер отклонил ключ. Проверьте ключ и повторите попытку")
 	case errors.Is(err, store.ErrInvalidState):
-		WriteError(w, http.StatusConflict, "invalid_request_state", "the request is not in a state that allows this operation")
+		WriteError(w, http.StatusConflict, "invalid_request_state", "Действие сейчас недоступно: завершите предыдущие шаги или обязательную настройку")
 	case errors.Is(err, store.ErrUnauthorized):
-		WriteError(w, http.StatusUnauthorized, "unauthorized", "authentication is required")
+		WriteError(w, http.StatusUnauthorized, "unauthorized", "Требуется авторизация")
 	case errors.Is(err, store.ErrNotFound):
-		WriteError(w, http.StatusNotFound, "not_found", "resource was not found")
+		WriteError(w, http.StatusNotFound, "not_found", "Данные не найдены")
 	default:
-		WriteError(w, http.StatusInternalServerError, "internal_error", "internal server error")
+		WriteError(w, http.StatusInternalServerError, "internal_error", "Внутренняя ошибка сервера")
 	}
 }

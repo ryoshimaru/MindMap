@@ -81,7 +81,7 @@ func configureAIProviders() (domain.AIProviderName, map[domain.AIProviderName]se
 			if strings.TrimSpace(apiKey) == "" {
 				apiKey = geminiEnvKey
 			}
-			return ai.NewGeminiProvider(client, apiKey, getenv("GEMINI_MODEL", "gemini-1.5-flash"))
+			return ai.NewGeminiProvider(client, apiKey, getenv("GEMINI_MODEL", "gemini-3.5-flash"))
 		},
 		domain.AIProviderDeepSeek: func(apiKey string) service.Provider {
 			if strings.TrimSpace(apiKey) == "" {

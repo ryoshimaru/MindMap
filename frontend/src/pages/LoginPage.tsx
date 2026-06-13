@@ -45,12 +45,8 @@ export function LoginPage() {
     <div className="auth-shell">
       <div className="auth-grid">
         <section className="auth-brand">
-          <span className="eyebrow">GoalMind</span>
+          <span className="eyebrow">mindmap</span>
           <strong>Вход в рабочее пространство.</strong>
-          <p>
-            После входа вы сразу попадете к главному сценарию: свободный ввод цели,
-            AI-анализ, уточнения и построение roadmap.
-          </p>
         </section>
 
         <section className="auth-panel">

@@ -1,0 +1,46 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: mindmap
+      POSTGRES_USER: mindmap
+      POSTGRES_PASSWORD: mindmap
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./migrations/00001_init.sql:/docker-entrypoint-initdb.d/00001_init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mindmap -d mindmap"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build: .
+    environment:
+      PORT: 8080
+      DB_URL: postgres://mindmap:mindmap@postgres:5432/mindmap?sslmode=disable
+      AI_KEY_ENCRYPTION_KEY: ${AI_KEY_ENCRYPTION_KEY}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      GOOGLE_REDIRECT_URL: ${GOOGLE_REDIRECT_URL:-http://localhost:8080/api/auth/oauth/google/callback}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.5-flash}
+      DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-chat}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8080}
+    depends_on:
+      - api
+    ports:
+      - "3000:80"
+
+volumes:
+  postgres_data:

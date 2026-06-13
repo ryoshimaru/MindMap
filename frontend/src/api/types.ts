@@ -54,6 +54,19 @@ export interface User {
   createdAt: string;
 }
 
+export interface UserProfile {
+  userId: string;
+  age: number;
+  occupation: string;
+  freeHoursPerWeek: number;
+  availableBudget: number;
+  constraints: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type UserProfileInput = Omit<UserProfile, "userId" | "createdAt" | "updatedAt">;
+
 export interface RegisterRequest {
   email: string;
   password: string;
@@ -129,6 +142,7 @@ export interface RequestFeasibility {
   assumptions: string[];
   requiredClarifications: string[];
   canGeneratePlan: boolean;
+  suggestedGoal?: InterpretedGoal | null;
 }
 
 export interface ActivitySignal {
@@ -244,6 +258,7 @@ export interface CreateTaskRequest {
 }
 
 export interface UpdateTaskRequest {
+  parentTaskId?: string;
   title?: string;
   description?: string;
   status?: TaskStatus;

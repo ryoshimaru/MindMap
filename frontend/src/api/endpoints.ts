@@ -40,7 +40,9 @@ import type {
   UpdateGoalRequest,
   UpdateTaskRequest,
   UpdateTaskStatusRequest,
-  User
+  User,
+  UserProfile,
+  UserProfileInput
 } from "./types";
 
 function unwrapData<T>(response: ApiResponse<T>) {
@@ -104,6 +106,18 @@ export const aiSettingsApi = {
     }
 
     return apiRequest<ApiResponse<AISettingsResponse>>("/api/ai-settings", {
+      method: "PUT",
+      body: JSON.stringify(payload)
+    }).then(unwrapData);
+  }
+};
+
+export const profileApi = {
+  get() {
+    return apiRequest<ApiResponse<UserProfile>>("/api/profile").then(unwrapData);
+  },
+  save(payload: UserProfileInput) {
+    return apiRequest<ApiResponse<UserProfile>>("/api/profile", {
       method: "PUT",
       body: JSON.stringify(payload)
     }).then(unwrapData);

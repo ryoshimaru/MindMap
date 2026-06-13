@@ -29,7 +29,8 @@ Return this JSON shape:
     "blockingFactors": ["factor"],
     "assumptions": ["assumption"],
     "requiredClarifications": ["question_id"],
-    "canGeneratePlan": false
+    "canGeneratePlan": false,
+    "suggestedGoal": null
   },
   "clarifyingQuestions": [
     {
@@ -61,7 +62,11 @@ Rules:
 - Include question types from: text, textarea, number, date, single_select, multi_select, boolean.
 - Put IDs of still-needed answers in feasibility.requiredClarifications.
 - Use null for unknown deadline.
-- Use Russian for user-facing question text when the user request is Russian.
+- confidence must be an integer percentage from 0 to 100.
+- All user-facing text must be in Russian.
+- Ask only questions that are not already answered by the supplied profile.
+- Return between 3 and 15 clarifying questions when clarification is needed. Stop earlier when the context is sufficient.
+- For an unrealistic but safe goal, set INFEASIBLE, explain why, and include a realistic suggestedGoal.
 - Do not invent a requestId.`, now.Format("2006-01-02"), text)
 }
 
@@ -80,7 +85,8 @@ Return strict JSON:
     "blockingFactors": ["factor"],
     "assumptions": ["assumption"],
     "requiredClarifications": ["question_id"],
-    "canGeneratePlan": false
+    "canGeneratePlan": false,
+    "suggestedGoal": null
   },
   "clarifyingQuestions": [
     {
@@ -106,6 +112,7 @@ Rules:
 - If the request is impossible, unsafe, illegal, or financially/physically impossible, set INFEASIBLE or UNSAFE.
 - If key data is still missing, set NEEDS_CLARIFICATION and return only the missing questions.
 - Put IDs of still-needed answers in feasibility.requiredClarifications.
+- confidence must be an integer percentage from 0 to 100.
 - Set canGeneratePlan to true only when a task plan may reasonably be generated. FEASIBLE and RISKY may allow generation; all other statuses must set canGeneratePlan to false.
 - Do not include prose outside JSON.`, string(payload))
 }
@@ -140,13 +147,17 @@ Return this strict JSON shape:
       "priority": "LOW|MEDIUM|HIGH",
       "estimatedHours": 2,
       "deadline": "YYYY-MM-DD or null",
+      "dependsOn": ["exact title of an earlier leaf step"],
       "children": []
     }
   ]
 }
 
 Rules:
-- Produce a real task tree, not prose.
+- All user-facing text must be in Russian.
+- Produce exactly two levels: stages at the root and concrete steps in children.
+- Root stages are containers. Dependencies may reference only earlier leaf steps by exact title.
+- Generate no more than 100 leaf steps in total.
 - Only generate a plan if feasibility.canGeneratePlan is true. Otherwise return an error JSON object is not allowed; the backend should block before this prompt.
 - Make tasks concrete, sequenced, and feasible for the deadline.
 - Use children for meaningful subtasks.

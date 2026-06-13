@@ -28,3 +28,11 @@ func (s *AuthService) UserByToken(token string) (domain.User, error) {
 func (s *AuthService) CreateOAuthUserSession(email, name, avatarURL string, provider domain.AuthProvider) (string, error) {
 	return s.store.CreateOAuthUserSession(email, name, avatarURL, provider)
 }
+
+func (s *AuthService) GetProfile(userID string) (domain.UserProfile, error) {
+	return s.store.GetUserProfile(userID)
+}
+
+func (s *AuthService) SaveProfile(userID string, req domain.UpsertUserProfileRequest) (domain.UserProfile, error) {
+	return s.store.SaveUserProfile(userID, req)
+}

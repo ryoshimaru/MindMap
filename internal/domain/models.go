@@ -2,6 +2,7 @@ package domain
 
 import (
 	"encoding/json"
+	"math"
 	"time"
 )
 
@@ -91,6 +92,25 @@ type User struct {
 	CreatedAt time.Time    `json:"createdAt"`
 }
 
+type UserProfile struct {
+	UserID           string    `json:"userId"`
+	Age              int       `json:"age"`
+	Occupation       string    `json:"occupation"`
+	FreeHoursPerWeek float64   `json:"freeHoursPerWeek"`
+	AvailableBudget  float64   `json:"availableBudget"`
+	Constraints      string    `json:"constraints"`
+	CreatedAt        time.Time `json:"createdAt"`
+	UpdatedAt        time.Time `json:"updatedAt"`
+}
+
+type UpsertUserProfileRequest struct {
+	Age              int     `json:"age"`
+	Occupation       string  `json:"occupation"`
+	FreeHoursPerWeek float64 `json:"freeHoursPerWeek"`
+	AvailableBudget  float64 `json:"availableBudget"`
+	Constraints      string  `json:"constraints"`
+}
+
 type UserRecord struct {
 	User
 	PasswordHash string
@@ -143,6 +163,7 @@ type RequestFeasibility struct {
 	Assumptions            []string                 `json:"assumptions"`
 	RequiredClarifications []string                 `json:"requiredClarifications"`
 	CanGeneratePlan        bool                     `json:"canGeneratePlan"`
+	SuggestedGoal          *InterpretedGoal         `json:"suggestedGoal,omitempty"`
 }
 
 type InterpretedGoal struct {
@@ -174,6 +195,30 @@ type ActivityTracker struct {
 	Stage      string           `json:"stage"`
 	Confidence int              `json:"confidence"`
 	Items      []ActivitySignal `json:"items"`
+}
+
+func (tracker *ActivityTracker) UnmarshalJSON(data []byte) error {
+	type activityTrackerJSON struct {
+		Stage      string           `json:"stage"`
+		Confidence float64          `json:"confidence"`
+		Items      []ActivitySignal `json:"items"`
+	}
+
+	var decoded activityTrackerJSON
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+
+	confidence := decoded.Confidence
+	if confidence >= 0 && confidence <= 1 {
+		confidence *= 100
+	}
+	confidence = math.Max(0, math.Min(100, confidence))
+
+	tracker.Stage = decoded.Stage
+	tracker.Confidence = int(math.Round(confidence))
+	tracker.Items = decoded.Items
+	return nil
 }
 
 type ActivitySignal struct {
@@ -232,6 +277,7 @@ type GeneratedPlanTask struct {
 	Priority       GoalPriority        `json:"priority"`
 	EstimatedHours float64             `json:"estimatedHours"`
 	Deadline       *string             `json:"deadline"`
+	DependsOn      []string            `json:"dependsOn,omitempty"`
 	Children       []GeneratedPlanTask `json:"children"`
 }
 
@@ -348,6 +394,7 @@ type CreateTaskRequest struct {
 }
 
 type UpdateTaskRequest struct {
+	ParentTaskID   *string       `json:"parentTaskId"`
 	Title          *string       `json:"title"`
 	Description    *string       `json:"description"`
 	Status         *TaskStatus   `json:"status"`

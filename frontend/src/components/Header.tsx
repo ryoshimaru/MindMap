@@ -1,59 +1,33 @@
-import { Link, useLocation } from "react-router-dom";
-import { USE_MOCKS } from "../api/client";
+import { useState } from "react";
+import { NavLink } from "react-router-dom";
 import { useAuth } from "../auth/useAuth";
-
-const routeCopy: Array<{
-  matcher: (pathname: string) => boolean;
-  title: string;
-  description: string;
-}> = [
-  {
-    matcher: (pathname) => pathname.startsWith("/goals/") && pathname.includes("/history"),
-    title: "История генераций",
-    description: "AI-запуски, промпт, ответ модели и обратная связь."
-  },
-  {
-    matcher: (pathname) => pathname.startsWith("/goals/"),
-    title: "Roadmap",
-    description: "Дерево задач, статусы, прогресс и версии плана."
-  },
-  {
-    matcher: (pathname) => pathname.startsWith("/api-docs"),
-    title: "Контракт API",
-    description: "Справка по backend-контракту."
-  },
-  {
-    matcher: () => true,
-    title: "GoalMind",
-    description: "Рабочее пространство цели."
-  }
-];
+import { AISettingsModal } from "./AISettingsModal";
+import { ProfileModal } from "./ProfileModal";
 
 export function Header() {
-  const location = useLocation();
-  const { logout } = useAuth();
-  const headerCopy =
-    routeCopy.find((item) => item.matcher(location.pathname)) || routeCopy[0];
+  const { user, logout } = useAuth();
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [aiOpen, setAIOpen] = useState(false);
 
-  return (
-    <header className="page-header">
-      <div>
-        <div className="page-header__meta">
-          <span className="eyebrow">GoalMind</span>
-          {USE_MOCKS ? <span className="pill pill--accent">Демо-режим</span> : null}
-        </div>
-        <h1>{headerCopy.title}</h1>
-        <p>{headerCopy.description}</p>
-      </div>
-
-      <div className="page-header__actions">
-        <Link to="/dashboard" className="button button--ghost">
-          Новая цель
-        </Link>
-        <button type="button" className="button button--secondary" onClick={logout}>
-          Выйти
-        </button>
+  return <>
+    <header className="topbar">
+      <NavLink to="/dashboard" className="wordmark">mindmap</NavLink>
+      <nav className="topbar__nav" aria-label="Основная навигация">
+        <NavLink to="/dashboard">Создать цель</NavLink>
+        <NavLink to="/goals">Мои цели</NavLink>
+      </nav>
+      <div className="profile-menu">
+        <button className="avatar-button" onClick={() => setMenuOpen((value) => !value)} aria-label="Открыть профиль">{user?.name?.slice(0, 1).toUpperCase() || "П"}</button>
+        {menuOpen ? <div className="profile-menu__popover">
+          <strong>{user?.name}</strong><span>{user?.email}</span>
+          <button onClick={() => { setProfileOpen(true); setMenuOpen(false); }}>Личные данные</button>
+          <button onClick={() => { setAIOpen(true); setMenuOpen(false); }}>AI-провайдер</button>
+          <button onClick={logout}>Выйти</button>
+        </div> : null}
       </div>
     </header>
-  );
+    {profileOpen ? <ProfileModal onClose={() => setProfileOpen(false)} /> : null}
+    {aiOpen ? <AISettingsModal canClose onClose={() => setAIOpen(false)} /> : null}
+  </>;
 }
