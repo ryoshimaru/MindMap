@@ -1,9 +1,9 @@
 import { useState } from "react";
 import { dependenciesApi, tasksApi } from "../api/endpoints";
-import type { TaskDependency, TaskTreeNode } from "../api/types";
+import type { Task, TaskDependency, TaskTreeNode } from "../api/types";
 import { formatDate } from "../utils/format";
 
-export function TaskNode({ node, stageIndex, siblings, allTasks, dependencies, onChanged }: { node: TaskTreeNode; stageIndex: number; siblings: TaskTreeNode[]; allTasks: TaskTreeNode[]; dependencies: Record<string, TaskDependency[]>; onChanged: () => Promise<void> }) {
+export function TaskNode({ node, stageIndex, siblings, allTasks, dependencies, onChanged, onStatusChanged, onBeforeStatusChange }: { node: TaskTreeNode; stageIndex: number; siblings: TaskTreeNode[]; allTasks: TaskTreeNode[]; dependencies: Record<string, TaskDependency[]>; onChanged: () => Promise<void>; onStatusChanged: (task: Task) => Promise<void>; onBeforeStatusChange: () => void }) {
   const [editing, setEditing] = useState(false);
   const [adding, setAdding] = useState(false);
   const [form, setForm] = useState({title: node.title, description: node.description, deadline: node.deadline || ""});
@@ -16,7 +16,11 @@ export function TaskNode({ node, stageIndex, siblings, allTasks, dependencies, o
   const siblingIndex = siblings.findIndex((item) => item.id === node.id);
 
   async function save() { await tasksApi.update(node.id, {title: form.title, description: form.description, deadline: form.deadline || null}); setEditing(false); await onChanged(); }
-  async function toggle() { await tasksApi.updateStatus(node.id, {status: node.status === "DONE" ? "TODO" : "DONE"}); await onChanged(); }
+  async function toggle() {
+    onBeforeStatusChange();
+    const updated = await tasksApi.updateStatus(node.id, {status: node.status === "DONE" ? "TODO" : "DONE"});
+    await onStatusChanged(updated);
+  }
   async function remove() { if (window.confirm(`Удалить «${node.title}»${isStage ? " вместе со всеми шагами" : ""}?`)) { await tasksApi.remove(node.id); await onChanged(); } }
   async function addStep() { if (!newTitle.trim()) return; await tasksApi.create(node.goalId, {parentTaskId: node.id, title: newTitle, description: "", deadline: newDeadline || null, priority: "MEDIUM", estimatedHours: 0, orderIndex: node.children.length + 1}); setNewTitle(""); setNewDeadline(""); setAdding(false); await onChanged(); }
   async function setDependency(dependsOnTaskId: string) {
@@ -38,7 +42,7 @@ export function TaskNode({ node, stageIndex, siblings, allTasks, dependencies, o
 
   return <section className="stage-card"><header><div><span className="stage-number">{String(stageIndex + 1).padStart(2, "0")}</span><h2>{node.title}</h2></div><div className="node-actions"><button disabled={siblingIndex === 0} onClick={() => void move(-1)}>↑</button><button disabled={siblingIndex === siblings.length - 1} onClick={() => void move(1)}>↓</button><button onClick={() => setEditing(!editing)}>Изменить</button><button onClick={remove}>Удалить</button></div></header>
     {editing ? <div className="inline-editor"><input value={form.title} onChange={(e) => setForm({...form, title: e.target.value})}/><button className="button button--primary" onClick={save}>Сохранить</button></div> : null}
-    <div className="stage-steps">{node.children.map((child) => <TaskNode key={child.id} node={child} stageIndex={stageIndex} siblings={node.children} allTasks={allTasks} dependencies={dependencies} onChanged={onChanged}/>)}</div>
+    <div className="stage-steps">{node.children.map((child) => <TaskNode key={child.id} node={child} stageIndex={stageIndex} siblings={node.children} allTasks={allTasks} dependencies={dependencies} onChanged={onChanged} onStatusChanged={onStatusChanged} onBeforeStatusChange={onBeforeStatusChange}/>)}</div>
     {adding ? <div className="inline-editor"><input autoFocus value={newTitle} onChange={(e) => setNewTitle(e.target.value)} placeholder="Название шага"/><input type="date" value={newDeadline} onChange={(e) => setNewDeadline(e.target.value)}/><button className="button button--primary" onClick={addStep}>Добавить</button><button className="button button--ghost" onClick={() => setAdding(false)}>Отмена</button></div> : <button className="add-step" onClick={() => setAdding(true)}>+ Добавить шаг</button>}
   </section>;
 }
